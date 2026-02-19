@@ -404,4 +404,25 @@ class SidebarService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             apply()
         }
     }
+
+    override fun onExpandTriggered(touchY: Float) {
+        // If not already showing, prepare the view and hide the handle
+        if (!isShowingSidebar) {
+            sidebarView.showView(initialY = touchY) // Add view (invisible)
+            isShowingSidebar = true
+        }
+
+        // Trigger the Morph Animation (Interruptible)
+        sidebarView.animateExpand()
+    }
+
+    override fun onCollapseTriggered() {
+        if (isShowingSidebar) {
+            // Trigger Morph Collapse
+            sidebarView.animateCollapse()
+            // sidebarView will call callback.onRemove() when animation finishes,
+            // which calls animateShowSideline(), but we can force it here for responsiveness
+            // isShowingSidebar = false // logic handled in onRemove
+        }
+    }
 }
