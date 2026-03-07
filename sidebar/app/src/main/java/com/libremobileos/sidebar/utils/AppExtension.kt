@@ -8,16 +8,9 @@ import android.graphics.drawable.Drawable
 import android.os.UserHandle
 import android.util.Log
 
-fun Application.isResizeableActivity(component: ComponentName): Boolean {
-    return runCatching { packageManager.getActivityInfo(component, /* flags */ 0) }
-        .onFailure { Log.e(MAIN_TAG, "failed to get activity info for $component: $it") }
-        .getOrNull()
-        ?.let { ActivityInfo.isResizeableMode(it.resizeMode) }
-        ?: false
-}
+fun Application.isResizeableActivity(component: ComponentName): Boolean = true
 
-fun Application.isResizeableActivity(packageName: String, activityName: String): Boolean =
-    isResizeableActivity(ComponentName(packageName, activityName))
+fun Application.isResizeableActivity(packageName: String, activityName: String): Boolean = true
 
 fun Application.getBadgedIcon(appInfo: ApplicationInfo, userHandle: UserHandle): Drawable =
     packageManager.getUserBadgedIcon(
