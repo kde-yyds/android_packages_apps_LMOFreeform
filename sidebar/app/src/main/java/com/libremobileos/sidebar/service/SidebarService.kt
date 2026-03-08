@@ -144,6 +144,7 @@ class SidebarService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         
         logger.d("screenWidth=$screenWidth screenHeight=$screenHeight showSideline=$showSideline autoEnabled=$autoEnabled")
         if (shouldShow) showView()
+        sidebarView.preload()
         return START_STICKY
     }
 
@@ -406,14 +407,14 @@ class SidebarService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     }
 
     override fun onExpandTriggered(touchY: Float) {
-        // If not already showing, prepare the view and hide the handle
         if (!isShowingSidebar) {
-            sidebarView.showView(initialY = touchY) // Add view (invisible)
+            sidebarView.showView(initialY = touchY, onReady = {
+                sidebarView.animateExpand()
+            })
             isShowingSidebar = true
+        } else {
+            sidebarView.animateExpand()
         }
-
-        // Trigger the Morph Animation (Interruptible)
-        sidebarView.animateExpand()
     }
 
     override fun onCollapseTriggered() {

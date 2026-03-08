@@ -51,6 +51,7 @@ class SidebarView(
         private var sidebarPositionX = 0
         private var sidebarPositionY = 0
         private var isShowing = false
+        private var isInitialized = false
         private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         private val layoutParams = LayoutParams()
         private val logger = Logger(TAG)
@@ -95,77 +96,73 @@ class SidebarView(
          * @param initialY The raw Y coordinate of the touch, used to set the pivot point.
          */
         @SuppressLint("ClickableViewAccessibility")
-        fun showView(initialY: Float = -1f) {
+        fun showView(initialY: Float = -1f, onReady: (() -> Unit)? = null) {
             if (isShowing) return
 
-                if (lifecycle.currentState == Lifecycle.State.DESTROYED) {
-                    lifecycleRegistry = LifecycleRegistry(this)
-                }
+                if (!isInitialized) {
+                    if (lifecycle.currentState == Lifecycle.State.DESTROYED) {
+                        lifecycleRegistry = LifecycleRegistry(this)
+                    }
 
-                initComposeView()
+                    initComposeView()
 
-                layoutParams.apply {
-                    type = LayoutParams.TYPE_APPLICATION_OVERLAY
-                    flags = LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    LayoutParams.FLAG_HARDWARE_ACCELERATED
-                    privateFlags = LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY or
+                    layoutParams.apply {
+                        type = LayoutParams.TYPE_APPLICATION_OVERLAY
+                        flags = LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                        LayoutParams.FLAG_HARDWARE_ACCELERATED
+                        privateFlags = LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY or
                         LayoutParams.PRIVATE_FLAG_SYSTEM_APPLICATION_OVERLAY
-                    format = PixelFormat.TRANSLUCENT
-                    // Disable default window animation to allow full control via ViewPropertyAnimator
-                    windowAnimations = 0
-                    layoutInDisplayCutoutMode = LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
-                }
-
-                updateSidebarPosition()
-
-                // --- Morph Animation Setup ---
-
-                // 1. Calculate Side
-                // Assuming sidebarPositionX > 0 means Right side, < 0 means Left side
-                val isRightSide = sidebarPositionX > 0
-
-                // 2. Set Pivot X (Horizontal Origin)
-                // If Right: pivot from the right edge. If Left: pivot from the left edge.
-                // Since width is WRAP_CONTENT, we use a safe estimation or wait for layout.
-                // For immediate animation, 0f (Left) works. For Right, we need the width.
-                // We can use a post-action to ensure width is calculated,
-                // OR if you know the fixed width (e.g. ~80dp), hardcode it.
-                // Here we try to get measured width, defaulting to a reasonable estimate if 0.
-                composeView.pivotX = if (isRightSide) (composeView.width.takeIf { it > 0 }?.toFloat() ?: 200f) else 0f
-
-                // 3. Set Pivot Y (Vertical Origin)
-                // Force the animation to start from the vertical center of the sidebar panel.
-                // This ensures it expands symmetrically from the middle.
-                composeView.pivotY = layoutParams.height / 2f
-
-                // 4. Set Initial "Hidden" State
-                composeView.alpha = 0f
-                composeView.scaleX = 0.0f
-                composeView.scaleY = 0.0f
-
-                // Start slightly off-screen or offset for the "pop" effect
-                val startOffset = if (isRightSide) 150f else -150f
-                composeView.translationX = startOffset
-
-                composeView.setOnTouchListener { view, event ->
-                    logger.d("composeView: $event")
-                    if (event.action == MotionEvent.ACTION_UP) {
-                        // Tapping outside or on background closes it
-                        animateCollapse()
-                        true
+                        format = PixelFormat.TRANSLUCENT
+                            windowAnimations = 0
+                            layoutInDisplayCutoutMode = LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
                     }
-                    false
-                }
 
-                handler.post {
-                    runCatching {
-                        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
-                        windowManager.addView(composeView, layoutParams)
+                    updateSidebarPosition()
 
-                        isShowing = true
-                    }.onFailure {
-                        logger.e("failed to add sidebar view: ", it)
+                    val isRightSide = sidebarPositionX > 0
+                    composeView.pivotX = if (isRightSide) (composeView.width.takeIf { it > 0 }?.toFloat() ?: 200f) else 0f
+                    composeView.pivotY = layoutParams.height / 2f
+                    composeView.alpha = 0f
+                    composeView.scaleX = 0f
+                    composeView.scaleY = 0f
+                    composeView.translationX = if (isRightSide) 150f else -150f
+
+                    composeView.setOnTouchListener { _, event ->
+                        logger.d("composeView: $event")
+                        if (event.action == MotionEvent.ACTION_UP) {
+                            animateCollapse()
+                            true
+                        } else false
                     }
+
+                    handler.post {
+                        runCatching {
+                            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+                            windowManager.addView(composeView, layoutParams)
+                            isShowing = true
+                            isInitialized = true
+                            onReady?.invoke()
+                        }.onFailure {
+                            logger.e("failed to add sidebar view: ", it)
+                        }
+                    }
+                } else {
+                    updateSidebarPosition()
+                    val isRightSide = sidebarPositionX > 0
+                    composeView.animate().cancel()
+                    composeView.alpha = 0f
+                    composeView.scaleX = 0f
+                    composeView.scaleY = 0f
+                    composeView.translationX = if (isRightSide) 150f else -150f
+
+                    // Restore interactive flags
+                    layoutParams.flags = (layoutParams.flags
+                    and LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                    and LayoutParams.FLAG_NOT_FOCUSABLE.inv())
+                    windowManager.updateViewLayout(composeView, layoutParams)
+
+                    isShowing = true
+                    onReady?.invoke()
                 }
         }
 
@@ -209,29 +206,41 @@ class SidebarView(
                 .start()
         }
 
-        // Helper for immediate cleanup without logic checks, used by animation end
         private fun removeViewInternal() {
             handler.post {
                 runCatching {
-                    lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
-                    windowManager.removeViewImmediate(composeView)
-                    callback.onRemove()
+                    composeView.animate().cancel()
+                    val isRightSide = sidebarPositionX > 0
+                    composeView.translationX = if (isRightSide) 150f else -150f
+                    composeView.alpha = 0f
+                    composeView.scaleX = 0f
+                    composeView.scaleY = 0f
+
+                    // Make window non-interactive while parked
+                    layoutParams.flags = layoutParams.flags or LayoutParams.FLAG_NOT_TOUCHABLE or
+                    LayoutParams.FLAG_NOT_FOCUSABLE
+                    windowManager.updateViewLayout(composeView, layoutParams)
+
                     isShowing = false
+                    callback.onRemove()
                 }.onFailure {
-                    logger.e("failed to remove sidebar view internal: $it")
+                    logger.e("failed to park sidebar view: ", it)
                 }
             }
         }
 
         fun removeView(force: Boolean = false) {
-            if (!isShowing && !force) return
-
-                if (force) {
-                    // Immediate removal
-                    removeViewInternal()
-                } else {
-                    // Graceful animation
-                    animateCollapse()
+            if (!isInitialized) return
+                composeView.animate().cancel()
+                handler.post {
+                    runCatching {
+                        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+                        windowManager.removeViewImmediate(composeView)
+                        isShowing = false
+                        isInitialized = false
+                    }.onFailure {
+                        logger.e("failed to remove sidebar view: ", it)
+                    }
                 }
         }
 
@@ -297,5 +306,13 @@ class SidebarView(
 
     interface Callback {
         fun onRemove()
+    }
+
+    fun preload() {
+        if (isInitialized) return
+            showView(onReady = {
+                // Immediately park it — just needed Compose to inflate
+                removeViewInternal()
+            })
     }
 }
